@@ -1,5 +1,8 @@
 name: Run API Request
 
+permissions:
+  contents: write
+  
 on:
   schedule:
     # alle 15 Minuten (UTC)

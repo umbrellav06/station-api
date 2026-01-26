@@ -3,7 +3,7 @@ name: Run API Request
 on:
   schedule:
     # alle 15 Minuten (UTC)
-    - cron: '*/15 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:

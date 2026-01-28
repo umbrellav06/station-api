@@ -4,9 +4,9 @@ permissions:
   contents: write
   
 on:
-  schedule:
+  #schedule:
     # alle 15 Minuten (UTC)
-    - cron: '*/5 * * * *'
+    #- cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:

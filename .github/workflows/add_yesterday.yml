@@ -35,9 +35,9 @@ jobs:
         run: |
           python station_request.py
 
-      - name: Run drop Duplicates script
+      - name: Run Clean Up script
         run: |
-          python dropDupli.py
+          python clean_up.py
 
       - name: Commit and push changes
         run: |

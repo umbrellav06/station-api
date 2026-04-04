@@ -2,90 +2,112 @@ from datetime import datetime, timedelta
 import pandas as pd
 import requests
 import holidays
+import os
 
-# ============================
-# KONFIGURATION
-# ============================
 API_KEY = "f1a82c03-ddcf-487d-a77c-171b4e2b044c"
 USER_NAME = "regenbogen24_mein.gmx"
 STATION_ID = "686b1552-ded0-4295-ae9c-30a03b3bfef0"
 
-DATE_PREFIX = "2026-01-27"
-# gestern
-yesterday = datetime.now() - timedelta(days=1)
-YEAR = yesterday.strftime("%Y")
-MONTH = yesterday.strftime("%m")
-DATE_PREFIX = yesterday.strftime("%Y-%m-%d")
-
-
-URL = f"https://{USER_NAME}:{API_KEY}@data.tankerkoenig.de/tankerkoenig-organization/tankerkoenig-data/raw/branch/master/prices/{YEAR}/{MONTH}/{DATE_PREFIX}-prices.csv"
-
-print(yesterday)
-response = requests.get(URL)
-
-if response.status_code == 200:
-    with open("temp.csv", "wb") as f:
-        f.write(response.content)
-    print("CSV erfolgreich heruntergeladen.")
+# ============================
+# 1. Bestehende Datei laden
+# ============================
+if os.path.exists("hem_prices.csv"):
+    df_existing = pd.read_csv("hem_prices.csv", parse_dates=["date"])
 else:
-    print("Fehler:", response.status_code, response.text)
-
-
-df = pd.read_csv("temp.csv", parse_dates=["date"])
+    df_existing = pd.DataFrame(columns=["date", "diesel", "e10", "e5", "weekday", "is_holiday", "is_vacation", "holiday"])
 
 # ============================
-# Filtern nach Station + Tag
+# 2. Letzte 7 Tage bestimmen
 # ============================
-df_filtered = df[
-    (df["station_uuid"] == STATION_ID) &
-    (df["date"].dt.date == yesterday.date())
-]
-# ============================
-# Nur gewünschte Spalten behalten
-# ============================
-df_result = df_filtered[["date", "diesel", "e10", "e5"]].copy()
-# ============================
-# Wochentag hinzufügen (0=Montag ... 6=Sonntag)
-# ============================
-df_result.loc[:, "weekday"] = df_result["date"].dt.weekday
-# ============================
-# 3. NRW-Feiertage laden
-# ============================
-nrw_holidays = holidays.Germany(years=df_result["date"].dt.year.unique(), subdiv="NW")
+today = datetime.now().date()
+days_to_check = [(today - timedelta(days=i)) for i in range(1, 8)]  # gestern bis -7 Tage
 
-# Feiertag = 1, sonst 0
-df_result.loc[:, "is_holiday"] = df_result["date"].dt.date.apply(lambda d: 1 if d in nrw_holidays else 0)
+# Welche Tage fehlen?
+existing_days = set(df_existing["date"].dt.date.unique())
+missing_days = [d for d in days_to_check if d not in existing_days]
+
+print("Fehlende Tage:", missing_days)
+
 # ============================
-# 4. NRW-Ferien über API laden
+# 3. NRW-Feiertage vorbereiten
+# ============================
+years = list({d.year for d in days_to_check})
+nrw_holidays = holidays.Germany(years=years, subdiv="NW")
+
+# ============================
+# 4. Ferien laden (robust)
 # ============================
 ferien_url = "https://ferien-api.de/api/v1/holidays/NW"
-ferien = requests.get(ferien_url).json()
+try:
+    ferien_response = requests.get(ferien_url)
+    ferien = ferien_response.json()
+except:
+    print("Warnung: Ferien-API liefert keine gültige Antwort.")
+    ferien = []
 
-# Ferienintervalle in Python-Daten umwandeln
 ferien_ranges = [
     (pd.to_datetime(f["start"]).date(), pd.to_datetime(f["end"]).date())
-    for f in ferien
+    for f in ferien if "start" in f and "end" in f
 ]
 
 def is_ferien(date):
     d = date.date()
-    for start, end in ferien_ranges:
-        if start <= d <= end:
-            return 1
-    return 0
+    return any(start <= d <= end for start, end in ferien_ranges)
 
-df_result.loc[:, "is_vacation"] = df_result["date"].apply(is_ferien)
 # ============================
-# 5. Feiertag ODER Ferien?
+# 5. Fehlende Tage nachladen
 # ============================
-df_result.loc[:, "holiday"] = df_result[["is_holiday", "is_vacation"]].max(axis=1)
+rows_to_append = []
+
+for day in missing_days:
+    YEAR = day.strftime("%Y")
+    MONTH = day.strftime("%m")
+    DATE_PREFIX = day.strftime("%Y-%m-%d")
+
+    url = f"https://{USER_NAME}:{API_KEY}@data.tankerkoenig.de/tankerkoenig-organization/tankerkoenig-data/raw/branch/master/prices/{YEAR}/{MONTH}/{DATE_PREFIX}-prices.csv"
+    print("Hole:", DATE_PREFIX)
+
+    response = requests.get(url)
+    if response.status_code != 200:
+        print("Fehler beim Laden:", response.status_code)
+        continue
+
+    with open("temp.csv", "wb") as f:
+        f.write(response.content)
+
+    df = pd.read_csv("temp.csv")
+    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert("Europe/Berlin").dt.tz_localize(None)
+
+    df_filtered = df[df["station_uuid"] == STATION_ID]
+
+    if df_filtered.empty:
+        print("Keine Daten für", day)
+        continue
+
+    df_result = df_filtered[["date", "diesel", "e10", "e5"]].copy()
+    df_result["weekday"] = df_result["date"].dt.weekday
+    df_result["is_holiday"] = df_result["date"].dt.date.apply(lambda d: 1 if d in nrw_holidays else 0)
+    df_result["is_vacation"] = df_result["date"].apply(is_ferien)
+    df_result["holiday"] = df_result[["is_holiday", "is_vacation"]].max(axis=1)
+
+    rows_to_append.append(df_result)
+
 # ============================
-# Ergebnis speichern
+# 6. Neue Daten anhängen
 # ============================
-df_result.to_csv(
-    "hem_prices.csv",
-    mode="a",          # anhängen statt überschreiben
-    header=False,      # keine Kopfzeile erneut schreiben
-    index=False
-)
-print("Fertig! Datei gespeichert.")
+if rows_to_append:
+    df_new = pd.concat(rows_to_append)
+    df_all = pd.concat([df_existing, df_new])
+else:
+    df_all = df_existing
+
+# ============================
+# 7. Nur letzte 7 Tage behalten
+# ============================
+df_all = df_all[df_all["date"].dt.date >= (today - timedelta(days=7))]
+
+# ============================
+# 8. Speichern
+# ============================
+df_all.to_csv("hem_prices.csv", index=False)
+print("Aktualisiert und gespeichert.")

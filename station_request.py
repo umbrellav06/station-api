@@ -104,6 +104,7 @@ else:
 # ============================
 # 7. Nur letzte 7 Tage behalten
 # ============================
+df_all["date"] = pd.to_datetime(df_all["date"])
 df_all = df_all[df_all["date"].dt.date >= (today - timedelta(days=7))]
 
 # ============================

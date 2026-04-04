@@ -1,5 +1,5 @@
 import pandas as pd
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 # CSV laden
 df = pd.read_csv("hem_prices.csv", parse_dates=["date"])
@@ -7,11 +7,10 @@ df = pd.read_csv("hem_prices.csv", parse_dates=["date"])
 # Duplikate entfernen
 df = df.drop_duplicates()
 
-# cutoff als tz-aware erzeugen
-cutoff = datetime.now(timezone.utc).astimezone(df["date"].dt.tz)
+# cutoff als tz-naive erzeugen
+cutoff = datetime.now().replace(tzinfo=None)
 
 # Grenze: heute minus 22 Tage
-# Nur Zeilen behalten, deren Datum >= cutoff ist
 df = df[df["date"] >= cutoff - timedelta(days=22)]
 
 # Zurückschreiben

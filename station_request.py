@@ -4,32 +4,45 @@ import requests
 import holidays
 import os
 
+# ============================
+# KONFIGURATION
+# ============================
 API_KEY = "f1a82c03-ddcf-487d-a77c-171b4e2b044c"
 USER_NAME = "regenbogen24_mein.gmx"
 STATION_ID = "686b1552-ded0-4295-ae9c-30a03b3bfef0"
 
+CSV_FILE = "hem_prices.csv"
+
 # ============================
 # 1. Bestehende Datei laden
 # ============================
-if os.path.exists("hem_prices.csv"):
-    df_existing = pd.read_csv("hem_prices.csv", parse_dates=["date"])
+if os.path.exists(CSV_FILE):
+    df_existing = pd.read_csv(CSV_FILE)
+
+    # Datum vereinheitlichen (tz-aware → tz-naive)
+    df_existing["date"] = (
+        pd.to_datetime(df_existing["date"], utc=True, errors="coerce")
+        .dt.tz_convert("Europe/Berlin")
+        .dt.tz_localize(None)
+    )
 else:
-    df_existing = pd.DataFrame(columns=["date", "diesel", "e10", "e5", "weekday", "is_holiday", "is_vacation", "holiday"])
+    df_existing = pd.DataFrame(
+        columns=["date", "diesel", "e10", "e5", "weekday", "is_holiday", "is_vacation", "holiday"]
+    )
 
 # ============================
 # 2. Letzte 7 Tage bestimmen
 # ============================
 today = datetime.now().date()
-days_to_check = [(today - timedelta(days=i)) for i in range(1, 8)]  # gestern bis -7 Tage
+days_to_check = [(today - timedelta(days=i)) for i in range(1, 8)]
 
-# Welche Tage fehlen?
 existing_days = set(df_existing["date"].dt.date.unique())
 missing_days = [d for d in days_to_check if d not in existing_days]
 
 print("Fehlende Tage:", missing_days)
 
 # ============================
-# 3. NRW-Feiertage vorbereiten
+# 3. Feiertage vorbereiten
 # ============================
 years = list({d.year for d in days_to_check})
 nrw_holidays = holidays.Germany(years=years, subdiv="NW")
@@ -39,16 +52,18 @@ nrw_holidays = holidays.Germany(years=years, subdiv="NW")
 # ============================
 ferien_url = "https://ferien-api.de/api/v1/holidays/NW"
 try:
-    ferien_response = requests.get(ferien_url)
+    ferien_response = requests.get(ferien_url, timeout=10)
     ferien = ferien_response.json()
 except:
     print("Warnung: Ferien-API liefert keine gültige Antwort.")
     ferien = []
 
-ferien_ranges = [
-    (pd.to_datetime(f["start"]).date(), pd.to_datetime(f["end"]).date())
-    for f in ferien if "start" in f and "end" in f
-]
+ferien_ranges = []
+for f in ferien:
+    if "start" in f and "end" in f:
+        start = pd.to_datetime(f["start"]).date()
+        end = pd.to_datetime(f["end"]).date()
+        ferien_ranges.append((start, end))
 
 def is_ferien(date):
     d = date.date()
@@ -64,7 +79,12 @@ for day in missing_days:
     MONTH = day.strftime("%m")
     DATE_PREFIX = day.strftime("%Y-%m-%d")
 
-    url = f"https://{USER_NAME}:{API_KEY}@data.tankerkoenig.de/tankerkoenig-organization/tankerkoenig-data/raw/branch/master/prices/{YEAR}/{MONTH}/{DATE_PREFIX}-prices.csv"
+    url = (
+        f"https://{USER_NAME}:{API_KEY}@data.tankerkoenig.de/"
+        f"tankerkoenig-organization/tankerkoenig-data/raw/branch/master/"
+        f"prices/{YEAR}/{MONTH}/{DATE_PREFIX}-prices.csv"
+    )
+
     print("Hole:", DATE_PREFIX)
 
     response = requests.get(url)
@@ -76,10 +96,15 @@ for day in missing_days:
         f.write(response.content)
 
     df = pd.read_csv("temp.csv")
-    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert("Europe/Berlin").dt.tz_localize(None)
+
+    # Datum sauber konvertieren
+    df["date"] = (
+        pd.to_datetime(df["date"], utc=True)
+        .dt.tz_convert("Europe/Berlin")
+        .dt.tz_localize(None)
+    )
 
     df_filtered = df[df["station_uuid"] == STATION_ID]
-
     if df_filtered.empty:
         print("Keine Daten für", day)
         continue
@@ -93,22 +118,22 @@ for day in missing_days:
     rows_to_append.append(df_result)
 
 # ============================
-# 6. Neue Daten anhängen
+# 6. Zusammenführen
 # ============================
 if rows_to_append:
-    df_new = pd.concat(rows_to_append)
-    df_all = pd.concat([df_existing, df_new])
+    df_new = pd.concat(rows_to_append, ignore_index=True)
+    df_all = pd.concat([df_existing, df_new], ignore_index=True)
 else:
     df_all = df_existing
 
 # ============================
 # 7. Nur letzte 7 Tage behalten
 # ============================
-df_all["date"] = pd.to_datetime(df_all["date"])
+df_all["date"] = pd.to_datetime(df_all["date"], errors="coerce")
 df_all = df_all[df_all["date"].dt.date >= (today - timedelta(days=7))]
 
 # ============================
 # 8. Speichern
 # ============================
-df_all.to_csv("hem_prices.csv", index=False)
+df_all.to_csv(CSV_FILE, index=False)
 print("Aktualisiert und gespeichert.")

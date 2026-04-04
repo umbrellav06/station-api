@@ -1,4 +1,4 @@
-name: Run Station Request for yesterday
+name: Run Station Request
 
 permissions:
   contents: write

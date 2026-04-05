@@ -144,5 +144,6 @@ df_all = df_all[df_all["date"].dt.date >= (today - timedelta(days=7))]
 # ============================
 # 8. Speichern
 # ============================
+df_all = df_all.sort_values("date")
 df_all.to_csv(CSV_FILE, index=False)
 print("Aktualisiert und gespeichert.")

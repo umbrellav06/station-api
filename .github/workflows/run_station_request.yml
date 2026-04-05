@@ -35,10 +35,6 @@ jobs:
         run: |
           python station_request.py
 
-      - name: Run Clean Up script
-        run: |
-          python clean_up.py
-
       - name: Commit and push changes
         run: |
           git config --global user.name "github-actions[bot]"

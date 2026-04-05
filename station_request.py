@@ -31,15 +31,12 @@ else:
     )
 
 # ============================
-# 2. Letzte 7 Tage bestimmen
+# 2. Letzte 7 Tage bestimmen (ohne heute)
 # ============================
 today = datetime.now().date()
 days_to_check = [(today - timedelta(days=i)) for i in range(1, 8)]
 
-existing_days = set(df_existing["date"].dt.date.unique())
-missing_days = [d for d in days_to_check if d not in existing_days]
-
-print("Fehlende Tage:", missing_days)
+print("Letzte 7 Tage:", days_to_check)
 
 # ============================
 # 3. Feiertage vorbereiten
@@ -70,11 +67,13 @@ def is_ferien(date):
     return any(start <= d <= end for start, end in ferien_ranges)
 
 # ============================
-# 5. Fehlende Tage nachladen
+# 5. Letzte 7 Tage laden
 # ============================
-rows_to_append = []
+df_new = pd.DataFrame(
+        columns=["date", "diesel", "e10", "e5", "weekday", "is_holiday", "is_vacation", "holiday"]
+    )
 
-for day in missing_days:
+for day in days_to_check:
     YEAR = day.strftime("%Y")
     MONTH = day.strftime("%m")
     DATE_PREFIX = day.strftime("%Y-%m-%d")
@@ -111,24 +110,34 @@ for day in missing_days:
 
     df_result = df_filtered[["date", "diesel", "e10", "e5"]].copy()
     df_result["weekday"] = df_result["date"].dt.weekday
-    df_result["is_holiday"] = df_result["date"].dt.date.apply(lambda d: 1 if d in nrw_holidays else 0)
+    df_result["is_holiday"] = df_result["date"].dt.date.apply(lambda d: True if d in nrw_holidays else False)
     df_result["is_vacation"] = df_result["date"].apply(is_ferien)
     df_result["holiday"] = df_result[["is_holiday", "is_vacation"]].max(axis=1)
 
-    rows_to_append.append(df_result)
+    if not df_result.empty:
+        if df_new.empty:
+            df_new = df_result.copy()
+        else:
+            df_new = pd.concat([df_new,df_result], ignore_index=True)
 
 # ============================
 # 6. Zusammenführen
 # ============================
-if rows_to_append:
-    df_new = pd.concat(rows_to_append, ignore_index=True)
-    df_all = pd.concat([df_existing, df_new], ignore_index=True)
+if not df_existing.empty and not df_new.empty:
+    df_all = pd.concat([df_new,df_existing], ignore_index=True)
 else:
-    df_all = df_existing
+    if not df_new.empty:
+        df_all = df_new.copy()
+    else:
+        df_all = df_existing.copy()
 
 # ============================
-# 7. Nur letzte 7 Tage behalten
+# 7. Clean Up
 # ============================
+# Duplikate entfernen
+df_all = df_all.drop_duplicates()
+
+# Grenze: heute minus 7 Tage
 df_all["date"] = pd.to_datetime(df_all["date"], errors="coerce")
 df_all = df_all[df_all["date"].dt.date >= (today - timedelta(days=7))]
 

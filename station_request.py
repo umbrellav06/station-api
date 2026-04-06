@@ -115,9 +115,9 @@ else:
 # ============================
 # 7. Clean Up
 # ============================
-# Grenze: heute minus 7 Tage
+# Grenze: heute minus 8 Tage
 df_all["date"] = pd.to_datetime(df_all["date"], errors="coerce")
-df_all = df_all[df_all["date"].dt.date >= (today - timedelta(days=7))]
+df_all = df_all[df_all["date"].dt.date >= (today - timedelta(days=8))]
 
 # Duplikate entfernen
 df_all = df_all.drop_duplicates()
